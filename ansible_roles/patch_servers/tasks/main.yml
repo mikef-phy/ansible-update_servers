@@ -1,0 +1,117 @@
+---
+# tasks file for patch_servers
+- name: "checking for aptitude"
+  shell: "apt list --installed |grep -i aptitude"
+  register: apt_check
+  changed_when: "apt_check.rc == 1"
+  failed_when: 0
+  when: ansible_distribution == "Debian" or ansible_distribution == "Ubuntu" 
+
+- name: Make sure apt is installed
+  command: "apt-get install aptitude -y"
+  when: (ansible_distribution == "Debian" or ansible_distribution == "Ubuntu") and apt_check.rc == 1
+
+- name: update files
+  environment:
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  command: "{{item}}"  
+  register: shell_result
+  with_items:
+    - "apt-get install --download-only"
+    - "apt-get update"
+  changed_when: 0
+  when: ansible_distribution == "Debian" or ansible_distribution == "Ubuntu" 
+
+- name: complete any unfinished yum transactions
+  args:
+    chdir: "/tmp/"
+  environment:
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  shell: "yum-complete-transaction -y"
+  changed_when: 0
+  when: ansible_distribution == "CentOS" or ansible_distribution == "RedHat"
+
+- name: "clean yum"
+  args:
+    chdir: "/tmp/"
+  environment:
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  shell: "{{item}}"
+  register: autoremove_com
+  when: ansible_distribution == "CentOS" or ansible_distribution == "RedHat"
+  with_items:
+    - "yum clean all"
+    - "rm -rf /var/cache/yum"
+    - "yum update --downloadonly"
+  changed_when: 0
+
+- name: "update using yum"
+  args:
+    chdir: "/tmp/"
+  environment:
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  shell: "{{item}}"
+  register: autoremove_com
+  when: ansible_distribution == "CentOS" or ansible_distribution == "RedHat"
+  async: 3600
+  poll: 30
+  with_items:
+    - "yum update -y"
+  changed_when: 0
+
+- name: "update using apt"
+  args:
+    chdir: "/tmp/"
+  environment:
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  shell: "{{item}}"
+  register: autoremove_com
+  when: ansible_distribution == "Debian" or ansible_distribution == "Ubuntu" 
+  async: 3600
+  poll: 30
+  with_items:
+    - "apt-get upgrade -y"
+  changed_when: 0
+  
+- name: "check for kernel update for needed reboot redhat"
+  args:
+    chdir: "/tmp/"
+  environment:
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  shell: LAST_KERNEL=$(rpm -q --last kernel | awk 'NR==1{sub(/kernel-/,""); print $1}'); CURRENT_KERNEL=$(uname -r); if [ $LAST_KERNEL != $CURRENT_KERNEL ]; then echo 'reboot'; else echo 'no'; fi
+  ignore_errors: true
+  register: reboot_hint_rh
+  changed_when: reboot_hint_rh.stdout.find("reboot") != -1
+  when: ansible_distribution == "CentOS" or ansible_distribution == "RedHat"
+
+- name: call reboot role redhat
+  import_role: 
+    name: ../roles/ansible_roles/ansible_roles/reboot
+  when: (ansible_distribution == "CentOS" or ansible_distribution == "RedHat") and reboot_hint_rh.stdout.find("reboot") != -1
+
+- name: "check for kernel update for needed reboot debian"
+  args:
+    chdir: "/tmp/"
+  environment:
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  shell: LAST_KERNEL=$(dpkg --get-selections | grep -v deinstall|egrep -i 'linux-image-[0-9]' | sort -V -r | awk 'NR==1{sub(/linux-image-/,""); print $1}'); CURRENT_KERNEL=$(uname -r); if [ $LAST_KERNEL != $CURRENT_KERNEL ]; then echo 'reboot'; else echo 'no'; fi
+  ignore_errors: true
+  register: reboot_hint_deb
+  changed_when: reboot_hint_deb.stdout.find("reboot") != -1
+  when: ansible_distribution == "Debian" or ansible_distribution == "Ubuntu"
+      
+- name: call reboot role debian
+  import_role: 
+    name: ../roles/ansible_roles/ansible_roles/reboot
+  when: (ansible_distribution == "Debian" or ansible_distribution == "Ubuntu") and reboot_hint_deb.stdout.find("reboot") != -1
+
+- name: "autoremove debian"
+  args:
+    chdir: "/tmp/"
+  environment:
+    PATH: "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin"
+  shell: apt-get autoremove -y
+  ignore_errors: true
+  register: autoremove_com
+  when: ansible_distribution == "Debian" or ansible_distribution == "Ubuntu"
+  changed_when: autoremove_com.stdout.find("0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded") == -1

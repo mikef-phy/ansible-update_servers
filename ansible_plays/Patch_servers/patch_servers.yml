@@ -1,0 +1,4 @@
+---
+- hosts: "{{targets}}"
+  roles:
+  - role: ../roles/ansible_roles/ansible_roles/patch_servers
